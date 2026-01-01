@@ -270,6 +270,14 @@ class BaseTestQueryBuilder:
         )()
         self.assertEqual(builder.to_sql(), sql)
 
+    def test_offset_with_limit(self):
+        builder = self.get_builder()
+        builder.limit(2).offset(5)
+        sql = getattr(
+            self, inspect.currentframe().f_code.co_name.replace("test_", "")
+        )()
+        self.assertEqual(builder.to_sql(), sql)
+
     def test_join(self):
         builder = self.get_builder()
         builder.join("profiles", "users.id", "=", "profiles.user_id")
@@ -303,21 +311,21 @@ class BaseTestQueryBuilder:
         )()
         self.assertEqual(builder.to_sql(), sql)
 
-    # def test_increment(self):
-    #     builder = self.get_builder()
-    #     builder.increment("age", 1)
-    #     sql = getattr(
-    #         self, inspect.currentframe().f_code.co_name.replace("test_", "")
-    #     )()
-    #     self.assertEqual(builder.to_sql(), sql)
+    def test_increment(self):
+        builder = self.get_builder()
+        builder_sql = builder.increment("age", 1)
+        sql = getattr(
+            self, inspect.currentframe().f_code.co_name.replace("test_", "")
+        )()
+        self.assertEqual(builder_sql, sql)
 
-    # def test_decrement(self):
-    #     builder = self.get_builder()
-    #     builder.decrement("age", 1)
-    #     sql = getattr(
-    #         self, inspect.currentframe().f_code.co_name.replace("test_", "")
-    #     )()
-    #     self.assertEqual(builder.to_sql(), sql)
+    def test_decrement(self):
+        builder = self.get_builder()
+        builder_sql = builder.decrement("age", 1)
+        sql = getattr(
+            self, inspect.currentframe().f_code.co_name.replace("test_", "")
+        )()
+        self.assertEqual(builder_sql, sql)
 
     def test_count(self):
         builder = self.get_builder()
@@ -565,7 +573,7 @@ class BaseTestQueryBuilder:
 
     def test_truncate(self):
         builder = self.get_builder()
-        sql = builder.truncate()
+        sql = builder.truncate(dry=True)
         sql_ref = getattr(
             self, inspect.currentframe().f_code.co_name.replace("test_", "")
         )()
@@ -742,7 +750,14 @@ class SQLiteQueryBuilderTest(BaseTestQueryBuilder, unittest.TestCase):
         builder = get_builder()
         builder.offset(5)
         """
-        return """SELECT * FROM "users" OFFSET 5"""
+        return """SELECT * FROM "users" LIMIT -1 OFFSET 5"""
+
+    def offset_with_limit(self):
+        """
+        builder = get_builder()
+        builder.limit(2).offset(5)
+        """
+        return """SELECT * FROM "users" LIMIT 2 OFFSET 5"""
 
     def join(self):
         """

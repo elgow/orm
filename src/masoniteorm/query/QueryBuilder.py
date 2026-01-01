@@ -1,16 +1,16 @@
 import inspect
 from copy import deepcopy
 from datetime import datetime
-from typing import Any, Dict, List, Optional, Callable
+from typing import Any, Callable, Dict, List, Optional
 
 from ..collection.Collection import Collection
 from ..config import load_config
 from ..exceptions import (
     HTTP404,
     ConnectionNotRegistered,
+    InvalidArgument,
     ModelNotFound,
     MultipleRecordsFound,
-    InvalidArgument,
 )
 from ..expressions.expressions import (
     AggregateExpression,
@@ -1230,6 +1230,7 @@ class QueryBuilder(ObservesEvents):
         return self
 
     def with_count(self, relationship, callback=None):
+        self.select(*self._model.get_selects())
         return getattr(self._model, relationship).get_with_count_query(
             self, callback=callback
         )
@@ -1489,7 +1490,7 @@ class QueryBuilder(ObservesEvents):
         self._updates += (UpdateQueryExpression(updates),)
         return self
 
-    def increment(self, column, value=1):
+    def increment(self, column, value=1, dry=False):
         """Increments a column's value.
 
         Arguments:
@@ -1521,6 +1522,9 @@ class QueryBuilder(ObservesEvents):
             UpdateQueryExpression(column, value, update_type="increment"),
         )
 
+        if dry or self.dry:
+            return self.get_grammar().compile("update").to_sql()
+
         self.set_action("update")
         results = self.new_connection().query(self.to_qmark(), self._bindings)
         processed_results = self.get_processor().get_column_value(
@@ -1528,7 +1532,7 @@ class QueryBuilder(ObservesEvents):
         )
         return processed_results
 
-    def decrement(self, column, value=1):
+    def decrement(self, column, value=1, dry=False):
         """Decrements a column's value.
 
         Arguments:
@@ -1560,6 +1564,9 @@ class QueryBuilder(ObservesEvents):
             UpdateQueryExpression(column, value, update_type="decrement"),
         )
 
+        if dry or self.dry:
+            return self.get_grammar().compile("update").to_sql()
+
         self.set_action("update")
         result = self.new_connection().query(self.to_qmark(), self._bindings)
         processed_results = self.get_processor().get_column_value(
@@ -1579,7 +1586,7 @@ class QueryBuilder(ObservesEvents):
         self.aggregate("SUM", "{column}".format(column=column))
         return self
 
-    def count(self, column=None):
+    def count(self, column=None, dry=False):
         """Aggregates a columns values.
 
         Arguments:
@@ -1596,7 +1603,7 @@ class QueryBuilder(ObservesEvents):
         else:
             self.aggregate("COUNT", f"{column}")
 
-        if self.dry:
+        if dry or self.dry:
             return self
 
         if not column:
@@ -1792,7 +1799,7 @@ class QueryBuilder(ObservesEvents):
     def _get_eager_load_result(self, related, collection):
         return related.eager_load_from_collection(collection)
 
-    def find(self, record_id, query=False):
+    def find(self, record_id, column=None, query=False):
         """Finds a row by the primary key ID. Requires a model
 
         Arguments:
@@ -1801,14 +1808,23 @@ class QueryBuilder(ObservesEvents):
         Returns:
             Model|None
         """
-        self.where(self._model.get_primary_key(), record_id)
+        if not column:
+            if not self._model:
+                raise InvalidArgument("A colum to search is required")
+
+            column = self._model.get_primary_key()
+
+        if isinstance(record_id, (list, tuple)):
+            self.where_in(column, record_id)
+        else:
+            self.where(column, record_id)
 
         if query:
             return self
 
         return self.first()
 
-    def find_or(self, record_id: int, callback: Callable, args=None):
+    def find_or(self, record_id: int, callback: Callable, args=None, column=None):
         """Finds a row by the primary key ID (Requires a model) or raise a ModelNotFound exception.
 
         Arguments:
@@ -1822,7 +1838,7 @@ class QueryBuilder(ObservesEvents):
         if not callable(callback):
             raise InvalidArgument("A callback must be callable.")
 
-        result = self.find(record_id=record_id)
+        result = self.find(record_id=record_id, column=column)
 
         if not result:
             if not args:
@@ -1832,7 +1848,7 @@ class QueryBuilder(ObservesEvents):
 
         return result
 
-    def find_or_fail(self, record_id):
+    def find_or_fail(self, record_id, column=None):
         """Finds a row by the primary key ID (Requires a model) or raise a ModelNotFound exception.
 
         Arguments:
@@ -1842,14 +1858,14 @@ class QueryBuilder(ObservesEvents):
             Model|ModelNotFound
         """
 
-        result = self.find(record_id=record_id)
+        result = self.find(record_id=record_id, column=column)
 
         if not result:
             raise ModelNotFound()
 
         return result
 
-    def find_or_404(self, record_id):
+    def find_or_404(self, record_id, column=None):
         """Finds a row by the primary key ID (Requires a model) or raise an 404 exception.
 
         Arguments:
@@ -1860,7 +1876,7 @@ class QueryBuilder(ObservesEvents):
         """
 
         try:
-            return self.find_or_fail(record_id)
+            return self.find_or_fail(record_id=record_id, column=column)
         except ModelNotFound:
             raise HTTP404()
 
@@ -2068,6 +2084,9 @@ class QueryBuilder(ObservesEvents):
 
         # Either _creates when creating, otherwise use columns
         columns = self._creates or self._columns
+        if not columns and not self._aggregates and self._model:
+            self.select(*self._model.get_selects())
+            columns = self._columns
 
         return self.grammar(
             columns=columns,
@@ -2223,9 +2242,10 @@ class QueryBuilder(ObservesEvents):
             callback(self)
         return self
 
-    def truncate(self, foreign_keys=False):
+    def truncate(self, foreign_keys=False, dry=False):
         sql = self.get_grammar().truncate_table(self.get_table_name(), foreign_keys)
-        if self.dry:
+
+        if dry or self.dry:
             return sql
 
         return self.new_connection().query(sql, ())
